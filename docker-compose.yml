@@ -1,0 +1,116 @@
+# ═══════════════════════════════════════════════════
+# docker-compose.yml — Local / ARM64 deployment
+# ═══════════════════════════════════════════════════
+#
+# Services:
+#   db       — PostgreSQL 16 (Alpine = small, ARM64-compatible)
+#   redis    — Redis 7 (ARM64 official image)
+#   api      — FastAPI web server (our code)
+#   worker   — Celery task workers (our code, separate scaling)
+#   beat     — Celery Beat scheduler (our code)
+#
+# SCALE WORKERS: docker compose up -d --scale worker=3
+# ═══════════════════════════════════════════════════
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: sms_db
+    environment:
+      POSTGRES_USER: sms_user
+      POSTGRES_PASSWORD: sms_pass
+      POSTGRES_DB: sms_tuition
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"   # bind to localhost only (security)
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sms_user -d sms_tuition"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: sms_redis
+    volumes:
+      - redis_data:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  api:
+    build: .
+    container_name: sms_api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # Override DATABASE_URL to use Docker service name 'db'
+      DATABASE_URL: postgresql+asyncpg://sms_user:sms_pass@db:5432/sms_tuition
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      uvicorn api.main:app
+      --host 0.0.0.0
+      --port 8000
+      --reload   # auto-reload for dev; remove in production
+    restart: unless-stopped
+
+  worker:
+    build: .
+    # No container_name — we scale multiple workers
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://sms_user:sms_pass@db:5432/sms_tuition
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      celery -A workers.celery_app worker
+      -l info
+      -Q reminders,sends,reconciliation,inbound,default
+      --concurrency=2
+    restart: unless-stopped
+    # Scale with: docker compose up -d --scale worker=3
+
+  beat:
+    build: .
+    container_name: sms_beat
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://sms_user:sms_pass@db:5432/sms_tuition
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      celery -A workers.celery_app beat
+      -l info
+      --scheduler sqlalchemy
+      # sqlalchemy scheduler stores last-run times in the DB so
+      # multiple beat instances don't duplicate jobs (important if
+      # you ever run beat on two Pis for redundancy).
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:

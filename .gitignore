@@ -1,0 +1,42 @@
+# ═══════════════════════════════════════════════════
+# .gitignore — Files that must NOT be committed to Git
+# ═══════════════════════════════════════════════════
+
+# Secrets
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Database
+*.db
+*.sqlite3
+
+# Docker
+*.tar
+
+# OS
+.DS_Store
+Thumbs.db
