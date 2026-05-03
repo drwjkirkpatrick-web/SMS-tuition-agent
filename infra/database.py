@@ -82,3 +82,8 @@ async def init_db():
 async def close_db():
     """Dispose the engine pool on shutdown."""
     await async_engine.dispose()
+
+
+# Import all models so Base.metadata includes them
+# This MUST happen after Base is defined
+from domain import models  # noqa: F401,E402
