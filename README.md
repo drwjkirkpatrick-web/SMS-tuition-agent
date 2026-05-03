@@ -4,12 +4,14 @@
 
 Built for **Raspberry Pi 4/5** and **NVIDIA Jetson Orin Nano Super** (ARM64).
 
+**Repository:** [github.com/drwjkirkpatrick-web/SMS-tuition-agent](https://github.com/drwjkirkpatrick-web/SMS-tuition-agent)
+
 ---
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/YOURNAME/sms-tuition-agent.git
+git clone https://github.com/drwjkirkpatrick-web/SMS-tuition-agent.git
 cd sms-tuition-agent
 cp .env.example .env  # fill in your Twilio credentials
 
