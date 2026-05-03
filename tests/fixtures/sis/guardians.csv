@@ -1,0 +1,4 @@
+sis_guardian_id,first_name,phone,email,relationship,is_primary,student_ids
+G-001,Sarah,+15551234567,sarah@email.com,parent,true,STU-001
+G-002,Michael,+15559876543,mike@email.com,parent,true,STU-002
+G-003,Jennifer,+15551112222,jen@email.com,parent,true,STU-003

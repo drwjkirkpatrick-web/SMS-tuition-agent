@@ -1,0 +1,4 @@
+sis_invoice_id,sis_student_id,invoice_number,amount_due,amount_paid,due_date,status
+INV-001,STU-001,MAY-001,500.00,0.00,2026-05-15,pending
+INV-002,STU-002,MAY-002,500.00,0.00,2026-05-15,pending
+INV-003,STU-003,MAY-003,500.00,0.00,2026-05-15,pending
