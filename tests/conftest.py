@@ -1,49 +1,61 @@
 """
-tests/conftest.py — Shared test fixtures
+tests/conftest.py — Shared test fixtures (Step 4 update)
 ═══════════════════════════════════════════════════
 
-pytest automatically discovers and uses this file.
-Fixtures here provide:
-  - An async database session for every test
-  - A test client for FastAPI endpoints
-  - Faker-generated fake data (schools, students, guardians)
-
-Teaching note: We use `pytest-asyncio` so tests can `await`
-database operations just like production code.
+Now with real async database session and HTTP client fixtures.
 ═══════════════════════════════════════════════════
 """
 
+import asyncio
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-# Placeholder imports — will resolve after Step 4–5
-# from api.main import app
-# from infra.database import async_session_factory
+from api.main import app
+from infra.database import Base, async_engine
 
 
-@pytest.fixture
-async def db_session():
+@pytest_asyncio.fixture(scope="session")
+async def db_engine():
     """
-    Yields an async SQLAlchemy session rolled back after each test.
-    This keeps tests isolated — no test pollutes the database for others.
+    Creates a fresh database schema once per test session.
     """
-    # TODO (Step 5): implement with async_session_factory and transaction rollback
-    yield None
+    async with async_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield async_engine
+    async with async_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await async_engine.dispose()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
+async def db_session(db_engine):
+    """
+    Yields an async session rolled back after each test.
+    Uses nested transactions so the global schema is preserved.
+    """
+    async with db_engine.connect() as conn:
+        # Begin a nested transaction (SAVEPOINT)
+        trans = await conn.begin_nested()
+        
+        session_factory = async_sessionmaker(conn, expire_on_commit=False, class_=AsyncSession)
+        async with session_factory() as session:
+            yield session
+        
+        await trans.rollback()
+
+
+@pytest_asyncio.fixture
 async def api_client():
     """
     Async HTTP client for testing FastAPI endpoints.
     """
-    # TODO (Step 4): instantiate with AsyncClient(app=app, base_url="http://test")
-    yield None
+    async with AsyncClient(app=app, base_url="http://test") as client:
+        yield client
 
 
 @pytest.fixture
 def faker():
-    """
-    Fake data generator for tests (names, phones, amounts).
-    """
     from faker import Faker
     return Faker()

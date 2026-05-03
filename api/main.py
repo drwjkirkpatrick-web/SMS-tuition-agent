@@ -1,16 +1,8 @@
 """
-api/main.py — FastAPI application entry point
+api/main.py — FastAPI application entry point (Step 4 update)
 ═══════════════════════════════════════════════════
 
-This file creates the FastAPI app instance and mounts:
-  - Health check endpoint (for Docker / monitoring)
-  - Webhook routers (Twilio callbacks)
-  - Admin API routers (SIS sync, dashboard data)
-
-Teaching note: FastAPI is "async-first". Every endpoint that touches
-PostgreSQL will use `async def` and async SQLAlchemy sessions.
-This lets one Uvicorn worker handle hundreds of concurrent requests
-without blocking — critical on a Raspberry Pi with limited cores.
+Now with database and Redis wired into the lifespan manager.
 ═══════════════════════════════════════════════════
 """
 
@@ -19,22 +11,34 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, status
 from fastapi.responses import JSONResponse
 
+from infra.database import close_db, init_db
+from infra.redis_pool import close_redis, ping_redis
+from infra.settings import get_settings
+
 # Import routers as we build them (Step 11+, currently stubs)
 # from api.webhooks import twilio_router
 # from api.admin import admin_router
 
 
-# ── Lifespan: startup / shutdown events ──
-# FastAPI 0.100+ uses lifespan context managers instead of @app.on_event.
-# This is where we initialize database connection pools, verify Redis,
-# and run startup health checks.
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # STARTUP
-    # TODO (Step 4+): initialize async engine, verify Redis ping
+    settings = get_settings()
+    
+    # Initialize database tables (dev only; production uses Alembic)
+    if settings.app_env == "development":
+        await init_db()
+    
+    # Verify Redis connectivity
+    redis_ok = await ping_redis()
+    if not redis_ok:
+        raise RuntimeError("Redis is unreachable — cannot start")
+    
     yield
+    
     # SHUTDOWN
-    # TODO (Step 4+): close database pool, flush logs
+    await close_db()
+    await close_redis()
 
 
 app = FastAPI(
@@ -45,31 +49,44 @@ app = FastAPI(
 )
 
 
-# ── Health Check ──
-# Docker and monitoring tools (like Uptime Kuma) poll this endpoint.
-# It must return 200 ONLY when the app AND its dependencies are healthy.
 @app.get("/health", tags=["health"])
 async def health_check():
     """
-    Returns 200 if API is running.
-    Step 4+: also checks DB and Redis connectivity.
+    Returns 200 only if API, DB, and Redis are all healthy.
+    Celery worker health is checked separately (Beat/Worker processes).
     """
+    from infra.database import async_engine
+    from sqlalchemy import text
+    
+    # Check DB
+    try:
+        async with async_engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        db_status = "connected"
+    except Exception:
+        db_status = "disconnected"
+    
+    # Check Redis
+    redis_status = "connected" if await ping_redis() else "disconnected"
+    
+    overall = "healthy" if db_status == "connected" and redis_status == "connected" else "unhealthy"
+    code = status.HTTP_200_OK if overall == "healthy" else status.HTTP_503_SERVICE_UNAVAILABLE
+    
     return JSONResponse(
-        status_code=status.HTTP_200_OK,
+        status_code=code,
         content={
-            "status": "healthy",
+            "status": overall,
             "version": "0.1.0",
-            # Step 4+: add "db": "connected", "redis": "connected"
+            "db": db_status,
+            "redis": redis_status,
         },
     )
 
 
-# ── Mount Routers (as we build them) ──
 # app.include_router(twilio_router, prefix="/webhooks", tags=["webhooks"])
 # app.include_router(admin_router, prefix="/admin", tags=["admin"])
 
 
-# ── Root redirect ──
 @app.get("/", include_in_schema=False)
 async def root():
     return {"message": "SMS Tuition Agent — see /docs for API documentation"}
