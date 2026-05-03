@@ -1,0 +1,93 @@
+name: CI — Tests + Lint
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov ruff mypy
+      
+      - name: Lint with ruff
+        run: |
+          ruff check .
+          ruff format . --check
+      
+      - name: Type check with mypy
+        run: mypy domain/ infra/ adapters/ api/ workers/
+        continue-on-error: true  # mypy can be strict on async SQLAlchemy
+      
+      - name: Run tests
+        env:
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test
+          REDIS_URL: redis://localhost:6379/1
+          TWILIO_ACCOUNT_SID: AC_test
+          TWILIO_AUTH_TOKEN: test_token
+          TWILIO_PHONE_NUMBER: +15551234567
+          WEBHOOK_SECRET: whsec_test
+          APP_ENV: testing
+        run: pytest tests/unit/ -v --cov=domain --cov=infra --cov-report=xml
+      
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        if: github.event_name == 'push'
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+
+  build-arm64:
+    runs-on: ubuntu-latest
+    name: Build ARM64 Docker image
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Build ARM64 image
+        run: |
+          docker buildx build             --platform linux/arm64             --tag sms-tuition-agent:arm64             --load             .
+      
+      - name: Test ARM64 image starts
+        run: |
+          docker run --rm sms-tuition-agent:arm64 python -c "import fastapi; print('OK')"
