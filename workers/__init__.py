@@ -1,16 +1,9 @@
 """
 workers package — Celery background task workers
 ═══════════════════════════════════════════════════
-
-This package contains all Celery tasks organized by domain:
-  - reminders.py      — daily reminder scheduling
-  - sends.py          — SMS dispatch (Step 11–12)
-  - reconciliation.py — payment and delivery reconciliation (Step 14, 17)
-  - inbound.py        — inbound SMS parsing (Step 16)
-
-Each task is registered with @celery_app.task and routed to a named queue.
-═══════════════════════════════════════════════════
 """
 
-# Re-export tasks so autodiscover finds them
 from workers.reminders import compute_reminder_candidates  # noqa: F401
+from workers.sends import poll_and_send_messages  # noqa: F401
+from workers.reconciliation import reconcile_unknown_deliveries, poll_payment_updates  # noqa: F401
+from workers.inbound import process_inbound_message  # noqa: F401
