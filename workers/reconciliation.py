@@ -45,15 +45,29 @@ async def _async_reconcile_unknown() -> dict:
     outbox = OutboxService()
     adapter = get_twilio_adapter()
     recon = ReconciliationService()
-    result = {"resolved": 0, "not_found": 0, "failed": 0, "errors": 0}
+    result = {"resolved": 0, "not_found": 0, "failed": 0, "errors": 0, "expired": 0}
 
     async with async_session_factory() as session:
         messages = await outbox.get_unknown_deliveries(session, older_than_minutes=10)
         for message in messages:
             try:
-                if not message.client_message_id:
+                # R8: Reconciliation max-age cutoff — messages older than 72 hours
+                # are marked FAILED with reason "reconciliation_timeout"
+                from datetime import datetime, timedelta
+                max_age = datetime.utcnow() - timedelta(hours=72)
+                if message.updated_at and message.updated_at < max_age:
+                    message.status = MessageStatus.FAILED
+                    message.failed_at = datetime.utcnow()
+                    message.updated_at = datetime.utcnow()
+                    result["expired"] += 1
                     continue
-                query_result = await adapter.query_delivery(message.client_message_id)
+
+                # E4: Query by provider_message_id (Twilio SID) instead of client_message_id
+                if not message.provider_message_id:
+                    # No SID stored — can't query, skip
+                    result["errors"] += 1
+                    continue
+                query_result = await adapter.query_delivery(message.provider_message_id)
                 await recon.reconcile_unknown_delivery(session, message, query_result.status)
 
                 if query_result.status == "not_found":

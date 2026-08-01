@@ -31,12 +31,12 @@ DATABASE_URL = _settings.database_url.get_secret_value()
 
 # Create the async engine
 # pool_pre_ping=True: verifies connection is alive before checkout
+# E7: Pool size and max_overflow now configurable via env vars
 async_engine = create_async_engine(
     DATABASE_URL,
     pool_pre_ping=True,
-    # Small pool for Raspberry Pi (default 5 connections max)
-    pool_size=5,
-    max_overflow=0,
+    pool_size=_settings.database_pool_size,
+    max_overflow=_settings.database_max_overflow,
     echo=_settings.app_env == "development",  # log SQL in dev
 )
 

@@ -73,14 +73,14 @@ class MockAdapter(SMSAdapter):
 
     async def query_delivery(
         self,
-        client_message_id: str,
+        provider_message_id: str,
     ) -> DeliveryQueryResult:
-        # Check if we "sent" this message
+        # E4: Query by provider_message_id (mock SID)
         for msg in self._sent_messages:
-            if msg.get("client_message_id") == client_message_id:
+            if msg.get("client_message_id") == provider_message_id:
                 return DeliveryQueryResult(
                     status="delivered",
-                    provider_message_id=f"MOCK_{random.randint(1000, 9999)}",
+                    provider_message_id=provider_message_id,
                 )
         return DeliveryQueryResult(status="not_found")
 

@@ -69,19 +69,49 @@ class ReminderPolicy(BaseModel):
 class PolicyService:
     """
     Load, validate, and update school reminder policies.
+    E6: Caches policy in Redis with 5-minute TTL.
     """
+
+    CACHE_TTL = 300  # 5 minutes
+
+    def _cache_key(self, school_id: int) -> str:
+        """E6: Redis cache key format."""
+        return f"school:{school_id}:policy"
 
     async def load_policy(self, school_id: int) -> ReminderPolicy:
         """
-        Load policy from school record. Returns default if not set.
+        Load policy from Redis cache (E6) or database.
+        Returns default if not set.
         """
+        # E6: Try Redis cache first
+        try:
+            from infra.redis_pool import redis_client
+            cached = await redis_client.get(self._cache_key(school_id))
+            if cached:
+                data = json.loads(cached)
+                return ReminderPolicy(**data)
+        except Exception:
+            pass  # Redis unavailable — fall through to DB
+
+        # Cache miss — load from DB
         async with async_session_factory() as session:
             from domain.models import School
             result = await session.execute(select(School).where(School.id == school_id))
             school = result.scalar_one_or_none()
             if school and school.reminder_policy:
                 data = json.loads(school.reminder_policy)
-                return ReminderPolicy(**data)
+                policy = ReminderPolicy(**data)
+                # E6: Cache in Redis
+                try:
+                    from infra.redis_pool import redis_client
+                    await redis_client.setex(
+                        self._cache_key(school_id),
+                        self.CACHE_TTL,
+                        policy.model_dump_json(),
+                    )
+                except Exception:
+                    pass  # Redis unavailable — non-critical
+                return policy
             return ReminderPolicy()
 
     async def save_policy(
@@ -92,6 +122,7 @@ class PolicyService:
     ) -> None:
         """
         Save policy to school record and log audit event.
+        E6: Invalidates Redis cache on save.
         """
         async with async_session_factory() as session:
             from domain.models import School
@@ -104,6 +135,13 @@ class PolicyService:
             school.reminder_policy = policy.model_dump_json()
             await session.commit()
             
+            # E6: Invalidate Redis cache
+            try:
+                from infra.redis_pool import redis_client
+                await redis_client.delete(self._cache_key(school_id))
+            except Exception:
+                pass
+
             await log_audit_event(
                 event_type="policy.changed",
                 entity_type="school",

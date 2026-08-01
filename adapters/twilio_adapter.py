@@ -173,46 +173,47 @@ class TwilioAdapter(SMSAdapter):
 
     async def query_delivery(
         self,
-        client_message_id: str,
+        provider_message_id: str,
     ) -> DeliveryQueryResult:
         """
-        Query Twilio for message status by client_message_id.
+        Query Twilio for message status by provider_message_id (Twilio SID).
         
-        Note: Twilio doesn't natively index by our client_message_id,
-        so we query by date range and filter. In production, store the
-        Twilio SID in our DB and query by SID instead.
+        E4: Now queries by SID directly using fetch() instead of listing
+        all recent messages and scanning bodies (O(1) vs O(N)).
+        
+        The reconciliation worker should pass message.provider_message_id
+        (the stored Twilio SID) rather than client_message_id.
         """
-        try:
-            # In practice, we should query by the stored provider_message_id
-            # This is a simplified implementation
-            messages = await asyncio.to_thread(
-                self.client.messages.list,
-                to=None,  # would filter by phone
-                from_=self.from_number,
-                date_sent=None,
-                limit=100,
-            )
-            # Filter manually by our client_message_id
-            for msg in messages:
-                # This is inefficient — in production, maintain provider_message_id mapping
-                if msg.body and client_message_id in msg.body:
-                    status_map = {
-                        "sent": "sent",
-                        "delivered": "delivered",
-                        "failed": "failed",
-                        "undelivered": "failed",
-                        "received": "sent",
-                        "queued": "sent",
-                        "sending": "sent",
-                        "accepted": "sent",
-                        "scheduled": "sent",
-                        "receiving": "sent",
-                    }
-                    return DeliveryQueryResult(
-                        status=status_map.get(msg.status, "unknown"),
-                        provider_message_id=msg.sid,
-                    )
+        if not provider_message_id:
             return DeliveryQueryResult(status="not_found")
+        
+        try:
+            msg = await asyncio.to_thread(
+                self.client.messages(provider_message_id).fetch
+            )
+            status_map = {
+                "sent": "sent",
+                "delivered": "delivered",
+                "failed": "failed",
+                "undelivered": "failed",
+                "received": "sent",
+                "queued": "sent",
+                "sending": "sent",
+                "accepted": "sent",
+                "scheduled": "sent",
+                "receiving": "sent",
+            }
+            return DeliveryQueryResult(
+                status=status_map.get(msg.status, "unknown"),
+                provider_message_id=msg.sid,
+            )
+        except TwilioRestException as exc:
+            if exc.status == 404:
+                return DeliveryQueryResult(status="not_found")
+            return DeliveryQueryResult(
+                status="unknown",
+                error_code=str(exc.code),
+            )
         except Exception as exc:
             return DeliveryQueryResult(
                 status="unknown",
@@ -235,13 +236,42 @@ class TwilioAdapter(SMSAdapter):
         return hmac.compare_digest(expected, signature)
 
     def _compute_signature(self, body: bytes, url: str) -> str:
-        """Compute expected Twilio webhook signature."""
-        # Twilio concatenates the URL and all form values
-        # For simplicity, we assume body is the raw form data
-        payload = url.encode("utf-8") + body
+        """
+        Compute expected Twilio webhook signature.
+        
+        S3: Implements Twilio's actual signing algorithm:
+        1. Parse the form body into key-value pairs
+        2. Sort parameters alphabetically by key
+        3. Concatenate: url + key1 + value1 + key2 + value2 + ...
+        4. HMAC-SHA1 with auth_token as key
+        5. Base64 encode the digest
+        
+        If body is not parseable as form data (e.g. raw JSON),
+        falls back to url + raw body concatenation.
+        """
+        from urllib.parse import parse_qs
+        
+        # Try parsing as form data
+        try:
+            body_str = body.decode("utf-8") if isinstance(body, bytes) else body
+            params = parse_qs(body_str, keep_blank_values=True)
+            
+            # Flatten single-value lists and sort by key
+            flat = {}
+            for key, values in params.items():
+                flat[key] = values[0] if values else ""
+            
+            # Build signature string: url + sorted(key + value) pairs
+            signature_str = url
+            for key in sorted(flat.keys()):
+                signature_str += key + flat[key]
+        except Exception:
+            # Fallback: raw body concatenation (original behavior)
+            signature_str = url + (body.decode("utf-8") if isinstance(body, bytes) else str(body))
+        
         digest = hmac.new(
             self.auth_token.encode("utf-8"),
-            payload,
+            signature_str.encode("utf-8"),
             hashlib.sha1,
         ).digest()
         return b64encode(digest).decode("utf-8")

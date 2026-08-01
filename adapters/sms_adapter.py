@@ -97,14 +97,17 @@ class SMSAdapter(ABC):
     @abstractmethod
     async def query_delivery(
         self,
-        client_message_id: str,
+        provider_message_id: str,
     ) -> DeliveryQueryResult:
         """
         Query the provider for the status of a previously submitted message.
         Used by the reconciliation loop (Step 14) for UNKNOWN_DELIVERY.
         
+        E4: Now queries by provider_message_id (the provider's own message ID,
+        e.g. Twilio SID) for O(1) lookup instead of scanning all messages.
+        
         Args:
-            client_message_id: the idempotent key we sent originally
+            provider_message_id: the provider-assigned message ID (e.g. Twilio SID)
         
         Returns:
             DeliveryQueryResult with current provider status

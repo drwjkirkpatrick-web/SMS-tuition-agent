@@ -49,9 +49,9 @@ class StudentRecord:
 @dataclass
 class GuardianRecord:
     """Normalized guardian data from any SIS."""
-    sis_guardian_id: Optional[str] = None
     first_name: str
     phone: str                   # E.164 format expected
+    sis_guardian_id: Optional[str] = None
     email: Optional[str] = None
     relationship: Optional[str] = None  # "parent", "grandparent", etc.
     is_primary: bool = True
@@ -72,9 +72,9 @@ class InvoiceRecord:
 @dataclass
 class PaymentRecord:
     """Normalized payment data from any SIS."""
-    sis_payment_id: Optional[str] = None
     sis_invoice_id: str
     amount: float
+    sis_payment_id: Optional[str] = None
     payment_method: Optional[str] = None
     paid_at: Optional[str] = None  # ISO 8601 datetime
 

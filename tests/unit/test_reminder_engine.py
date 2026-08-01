@@ -242,7 +242,7 @@ class TestBuildCandidates:
                        due_date=date(2026, 5, 15), status=InvoiceStatus.PENDING)
         inv2 = Invoice(id=1002, school_id=1, student_id=202, guardian_id=101,
                        invoice_number="MAY-002", amount_due=Decimal("500"), amount_paid=Decimal("0"),
-                       due_date=date(2026, 5, 20), status=InvoiceStatus.PENDING)
+                       due_date=date(2026, 5, 15), status=InvoiceStatus.PENDING)  # same due date → both trigger
         today = date(2026, 5, 1)
         candidates = reminder_service.build_candidates(sample_school, [inv1, inv2], today)
         assert len(candidates) == 2

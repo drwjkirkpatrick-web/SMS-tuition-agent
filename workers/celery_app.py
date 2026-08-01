@@ -21,6 +21,7 @@ celery_app = Celery(
         "workers.sends",
         "workers.reconciliation",
         "workers.inbound",
+        "workers.maintenance",
     ],
 )
 
@@ -41,9 +42,16 @@ celery_app.conf.update(
     task_max_retries=3,
     task_acks_late=True,
     worker_prefetch_multiplier=1,
+    # E10: Time limits prevent hung tasks from blocking workers forever
+    task_time_limit=300,           # hard kill after 5 minutes
+    task_soft_time_limit=240,      # SoftTimeLimitExceeded after 4 minutes
+    # R3: Graceful shutdown — finish current task before exiting
+    task_reject_on_worker_lost=True,
+    worker_hijack_root_logger=True,
 )
 
 # Beat schedule: run daily at 8:00 AM UTC (adjust for timezone in task)
+# R5/R6/R9: Added retention purge, alert check, and backup jobs
 celery_app.conf.beat_schedule = {
     "compute-reminders-daily": {
         "task": "workers.reminders.compute_reminder_candidates",
@@ -57,6 +65,22 @@ celery_app.conf.beat_schedule = {
     "poll-payments": {
         "task": "workers.reconciliation.poll_payment_updates",
         "schedule": 300.0,  # every 5 minutes
+    },
+    # R6: Data retention purge — daily at 3 AM UTC
+    "retention-purge-daily": {
+        "task": "workers.maintenance.run_retention_purge",
+        "schedule": crontab(hour=3, minute=0),
+    },
+    # R9: Failure threshold alerting — every 15 minutes
+    "failure-alert-check": {
+        "task": "workers.maintenance.run_alert_check",
+        "schedule": 900.0,  # every 15 minutes
+        "kwargs": {"school_id": 1},
+    },
+    # R10: Automated database backup — daily at 2 AM UTC
+    "automated-backup": {
+        "task": "workers.maintenance.run_backup",
+        "schedule": crontab(hour=2, minute=0),
     },
 }
 

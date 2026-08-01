@@ -118,6 +118,38 @@ class Settings(BaseSettings):
         ge=1,
     )
 
+    # ── Database Pool (E7: Worker pool sizing) ──
+    database_pool_size: int = Field(
+        default=5,
+        description="SQLAlchemy connection pool size (increase for multi-worker)",
+        ge=1,
+        le=50,
+    )
+    database_max_overflow: int = Field(
+        default=10,
+        description="Additional connections beyond pool_size when under load",
+        ge=0,
+        le=50,
+    )
+
+    # ── CORS (S6: Admin API CORS) ──
+    cors_allowed_origins: str = Field(
+        default="http://localhost:3000,http://localhost:8000",
+        description="Comma-separated list of allowed CORS origins",
+    )
+
+    # ── Admin Alert Phone (R9: Failure alerting) ──
+    admin_alert_phone: str = Field(
+        default="",
+        description="Phone number to receive failure threshold SMS alerts (E.164)",
+    )
+
+    # ── Backup (R10: Automated DB backup) ──
+    backup_output_dir: str = Field(
+        default="/data/backups",
+        description="Directory for encrypted database backups",
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

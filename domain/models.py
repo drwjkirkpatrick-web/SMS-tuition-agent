@@ -641,3 +641,40 @@ class AuditEvent(Base):
         Index("ix_audit_school_created", "school_id", "created_at"),
         Index("ix_audit_type_created", "event_type", "created_at"),
     )
+
+
+# ═══════════════════════════════════════════════════
+# Dead Letter Messages (R4: Messages that exhausted retries)
+# ═══════════════════════════════════════════════════
+
+class DeadLetterMessage(Base):
+    __tablename__ = "dead_letter_messages"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    original_message_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("outbound_messages.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    school_id: Mapped[int] = mapped_column(
+        ForeignKey("schools.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    guardian_id: Mapped[int] = mapped_column(
+        ForeignKey("guardians.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    message_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    reminder_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    failure_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    original_created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    dead_lettered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

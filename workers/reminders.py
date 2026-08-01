@@ -93,36 +93,42 @@ async def _async_compute_reminder_candidates(school_id: int) -> dict:
             today = date.today()
             candidates = reminder_service.build_candidates(school, invoices, today=today)
 
+            # E1: Bulk-load all guardians for candidates in a single query
+            guardian_ids = list({c.guardian_id for c in candidates})
+            if guardian_ids:
+                guardian_result = await session.execute(
+                    select(Guardian).where(Guardian.id.in_(guardian_ids))
+                )
+                guardian_map = {g.id: g for g in guardian_result.scalars().all()}
+            else:
+                guardian_map = {}
+
+            # Also build invoice map for O(1) lookup
+            invoice_map = {inv.id: inv for inv in invoices}
+
             # 4. Apply suppression checks per candidate
             final_candidates = []
             for candidate in candidates:
-                # Load guardian for suppression check
-                guardian_result = await session.execute(
-                    select(Guardian).where(Guardian.id == candidate.guardian_id)
-                )
-                guardian = guardian_result.scalar_one_or_none()
+                guardian = guardian_map.get(candidate.guardian_id)
                 if not guardian:
                     continue
 
-                suppressed, reason = reminder_service.should_suppress(
-                    invoices=[i for i in invoices if i.id == candidate.invoice_id][0],
-                    guardian=guardian,
-                )
-                # Note: should_suppress expects an Invoice object
-                # We need to refactor slightly — let's get the invoice
-                invoice = next((i for i in invoices if i.id == candidate.invoice_id), None)
+                invoice = invoice_map.get(candidate.invoice_id)
                 if not invoice:
                     continue
+
                 suppressed, reason = reminder_service.should_suppress(invoice, guardian)
                 
                 if suppressed:
                     result["suppressed"] += 1
+                    # S7: Pass session for transactional audit logging
                     await log_audit_event(
                         event_type="reminder.suppressed",
                         entity_type="message",
                         entity_id=candidate.message_key,
                         summary=f"Reminder suppressed: {reason}",
                         context=AuditContext(school_id=school_id, actor_type="scheduler"),
+                        session=session,
                     )
                     continue
 

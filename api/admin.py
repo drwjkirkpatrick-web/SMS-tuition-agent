@@ -20,7 +20,7 @@ Teaching notes:
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from passlib.hash import bcrypt
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,6 +46,25 @@ from infra.settings import get_settings
 router = APIRouter()
 
 
+# S1: Rate limiting dependency for admin endpoints
+async def admin_rate_limit(request: Request) -> None:
+    """Redis-backed rate limiter: 60 requests/minute per IP."""
+    from infra.rate_limiter import RateLimiter
+    limiter = RateLimiter()
+    client_ip = request.client.host if request.client else "unknown"
+    allowed, retry_after = await limiter.check_rate_limit(
+        key=f"admin:{client_ip}",
+        limit=60,
+        window_seconds=60,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Rate limit exceeded",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+
 async def verify_admin_token(x_admin_token: Optional[str] = Header(None)) -> None:
     """Verify the admin token from X-Admin-Token header."""
     settings = get_settings()
@@ -59,33 +78,34 @@ async def verify_admin_token(x_admin_token: Optional[str] = Header(None)) -> Non
 
 # ── Dashboard Stats ──
 
-@router.get("/dashboard/stats", dependencies=[Depends(verify_admin_token)])
+@router.get("/dashboard/stats", dependencies=[Depends(verify_admin_token), Depends(admin_rate_limit)])
 async def dashboard_stats(
     school_id: int = 1,
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     """Aggregate counts for the dashboard."""
-    # Message counts
-    msg_counts = {}
+    # E5: Single GROUP BY query instead of per-status COUNT queries
+    msg_result = await session.execute(
+        select(OutboundMessage.status, func.count(OutboundMessage.id))
+        .where(OutboundMessage.school_id == school_id)
+        .group_by(OutboundMessage.status)
+    )
+    msg_counts = {row[0].value: row[1] for row in msg_result.all()}
+    # Fill in zero counts for statuses with no messages
     for s in MessageStatus:
-        count_result = await session.execute(
-            select(func.count(OutboundMessage.id)).where(
-                OutboundMessage.school_id == school_id,
-                OutboundMessage.status == s,
-            )
-        )
-        msg_counts[s.value] = count_result.scalar()
+        if s.value not in msg_counts:
+            msg_counts[s.value] = 0
     
-    # Invoice counts
-    inv_counts = {}
+    # E5: Single GROUP BY for invoices
+    inv_result = await session.execute(
+        select(Invoice.status, func.count(Invoice.id))
+        .where(Invoice.school_id == school_id)
+        .group_by(Invoice.status)
+    )
+    inv_counts = {row[0].value: row[1] for row in inv_result.all()}
     for s in InvoiceStatus:
-        count_result = await session.execute(
-            select(func.count(Invoice.id)).where(
-                Invoice.school_id == school_id,
-                Invoice.status == s,
-            )
-        )
-        inv_counts[s.value] = count_result.scalar()
+        if s.value not in inv_counts:
+            inv_counts[s.value] = 0
     
     # Hardship queue
     hardship_count = await session.execute(
@@ -105,7 +125,7 @@ async def dashboard_stats(
 
 # ── Hardship / CALL Queue ──
 
-@router.get("/queue/hardship", dependencies=[Depends(verify_admin_token)])
+@router.get("/queue/hardship", dependencies=[Depends(verify_admin_token), Depends(admin_rate_limit)])
 async def hardship_queue(
     school_id: int = 1,
     status: Optional[str] = None,
@@ -141,7 +161,7 @@ async def hardship_queue(
     return items
 
 
-@router.get("/queue/callback", dependencies=[Depends(verify_admin_token)])
+@router.get("/queue/callback", dependencies=[Depends(verify_admin_token), Depends(admin_rate_limit)])
 async def callback_queue(
     school_id: int = 1,
     session: AsyncSession = Depends(get_db),
@@ -169,7 +189,7 @@ async def callback_queue(
 
 # ── Invoice Lookup ──
 
-@router.get("/invoices", dependencies=[Depends(verify_admin_token)])
+@router.get("/invoices", dependencies=[Depends(verify_admin_token), Depends(admin_rate_limit)])
 async def list_invoices(
     school_id: int = 1,
     status: Optional[str] = None,

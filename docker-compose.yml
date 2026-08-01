@@ -8,8 +8,11 @@
 #   api      — FastAPI web server (our code)
 #   worker   — Celery task workers (our code, separate scaling)
 #   beat     — Celery Beat scheduler (our code)
+#   backup   — Nightly encrypted DB backup sidecar (R10)
 #
 # SCALE WORKERS: docker compose up -d --scale worker=3
+#
+# S8: For production with TLS, use docker-compose.prod.yml override
 # ═══════════════════════════════════════════════════
 
 services:

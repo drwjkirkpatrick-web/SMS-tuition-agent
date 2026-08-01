@@ -1,0 +1,60 @@
+# ═══════════════════════════════════════════════════
+# docker-compose.prod.yml — Production override
+# ═══════════════════════════════════════════════════
+#
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# S8: Adds TLS termination, removes --reload, binds to localhost
+# R10: Adds backup sidecar container
+# ═══════════════════════════════════════════════════
+
+services:
+  api:
+    ports:
+      - "127.0.0.1:8000:8000"  # S8: bind to localhost only (TLS via reverse proxy)
+    command: >
+      uvicorn api.main:app
+      --host 0.0.0.0
+      --port 8000
+      --ssl-keyfile /certs/privkey.pem
+      --ssl-certfile /certs/fullchain.pem
+    volumes:
+      - /etc/letsencrypt/live/${TLS_DOMAIN}:/certs:ro
+    environment:
+      APP_ENV: production
+
+  worker:
+    environment:
+      APP_ENV: production
+    command: >
+      celery -A workers.celery_app worker
+      -l info
+      -Q reminders,sends,reconciliation,inbound,default
+      --concurrency=2
+      --without-gossip
+      --without-mingle
+      --without-heartbeat
+
+  beat:
+    environment:
+      APP_ENV: production
+
+  # R10: Backup sidecar — runs nightly pg_dump, encrypts, retains 7+4
+  backup:
+    build: .
+    container_name: sms_backup
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://sms_user:sms_pass@db:5432/sms_tuition
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      python -m scripts.backup
+    volumes:
+      - backup_data:/data/backups
+    restart: "no"  # run on-demand or via host cron
+
+volumes:
+  backup_data:
